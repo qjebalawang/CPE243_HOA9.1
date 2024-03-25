@@ -1,0 +1,90 @@
+---
+- hosts: all
+  become: true
+  pre_tasks:
+
+  - name: configure dpkg
+    raw: sudo dpkg --configure -a
+    ignore_errors: yes
+    changed_when: false
+
+  - name: install updates
+    tags: always
+    apt:
+      update_cache: yes
+      cache_valid_time: 86400
+
+- name: Generate private key and CSR on target host
+  hosts: managenode
+  gather_facts: no
+  vars:
+    certificate_name: my_certificate
+    ca_email: "rootca@enova-conseil.com"
+  tasks:
+    - name: Generate private key
+      become: true
+      community.crypto.openssl_privatekey:
+        path: "/etc/ssl/private/{{ certificate_name }}.key"
+        mode: 0600
+      register: private_key
+
+    - name: Generate CSR
+      community.crypto.openssl_csr:
+        path: "/tmp/{{ certificate_name }}.csr"
+        privatekey_path: "/tmp/{{ certificate_name }}.key"
+        common_name: "{{ inventory_hostname }}"
+        email_address: "{{ ca_email }}"
+
+    - name: Copy CSR to control host
+      copy:
+        src: "/etc/ssl/private/{{ certificate_name }}.csr"
+        dest: "/tmp/{{ certificate_name }}.csr"
+      delegate_to: controlnode
+
+- name: Sign CSR on control host
+  hosts: controlnode
+  gather_facts: no
+  vars:
+    ca_key: "/path/to/ca.key"
+    ca_certificate: "/path/to/ca.crt"
+    ca_name: "My CA"
+    ca_email: "rootca@enova-conseil.com"
+  tasks:
+    - name: Sign CSR
+      shell: openssl x509 -req -in /tmp/{{ certificate_name }}.csr \
+             -CA /path/to/ca.crt -CAkey /path/to/ca.key -CAcreateserial \
+             -sha256 -days 365 -out /etc/ssl/private/{{ certificate_name }}.crt \
+             -extensions v3_ca -extfile <(echo "[ v3_ca ]" \
+             "subjectAltName=IP:{{ ansible_host }}")
+
+      register: signed_cert
+      changed_when: signed_cert.rc == 0
+
+    - name: Copy signed certificate to target host
+      copy:
+        src: "/etc/ssl/private/{{ certificate_name }}.crt"
+        dest: "/etc/ssl/private/{{ certificate_name }}.crt"
+        delegate_to: "{{ item }}"
+      with_items:
+        - "{{ groups.manage_node }}"
+
+- name: Copy CA certificate to target host
+  hosts: managenode
+  gather_facts: no
+  tasks:
+    - name: Copy CA certificate to target host
+      copy:
+        src: "/path/to/ca.crt"
+        dest: "/etc/ssl/certs/{{ ca_name }}.crt"
+
+- name: Verify SSL certificate
+  hosts: managenode
+  gather_facts: no
+  tasks:
+    - name: Verify SSL certificate
+      command: openssl x509 -noout -text -in /etc/ssl/private/{{ certificate_name }}.crt
+      register: certificate_info
+
+    - name: Print certificate information
+      debug:
+        var: certificate_info.stdout

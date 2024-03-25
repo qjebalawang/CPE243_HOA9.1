@@ -1,0 +1,138 @@
+---
+- name: Building a CA with SSL
+  hosts: controlnode
+  become: yes
+  vars:
+    ca_dir: /etc/ssl/CA
+    index_file: ${ca_dir}/index.txt
+    serial_file: ${ca_dir}/serial
+    openssl_cnf: /etc/ssl/openssl.cnf
+    ca_key: ${ca_dir}/cakey.pem
+    ca_cert: ${ca_dir}/cacert.pem
+    csr_file: /tmp/server.csr
+    key_file: /tmp/server.key
+    passphrase: jhoana1234
+    cert_file: ${ca_dir}/newcerts/01.pem
+
+  tasks:
+    - name: Create CA directories
+      file:
+        path:
+          - "{{ ca_dir }}"
+          - "{{ ca_dir }}/newcerts"
+        state: directory
+        mode: 0750
+
+    - name: Initialize CA files
+      block:
+        - name: Create CA directory
+          file:
+            path: /etc/ssl/CA
+            state: directory
+            mode: 0750
+
+        - name: Create index.txt file
+          file:
+            path: /etc/ssl/CA/index.txt
+            state: touch
+            mode: 0640
+
+        - name: Create serial file
+          file:
+            path: /etc/ssl/CA/serial
+            state: touch
+            mode: 0640
+
+        - name: Create CA directory and set serial number
+          file:
+            path: /etc/ssl/CA
+            state: directory
+            mode: 0750
+          copy:
+            dest: /etc/ssl/CA/serial
+            content: "01"
+            mode: 0640
+
+        - name: Set CA serial number
+          copy:
+            dest: "{{ serial_file }}"
+            content: "01"
+
+    - name: Update OpenSSL configuration
+      blockinfile:
+        path: "{{ openssl_cnf }}"
+        block: |
+          [ CA_default ]
+          dir               = {{ ca_dir }}
+          certificate      = {{ ca_cert }}
+          private_key     = {{ ca_key }}
+          new_certs_dir   = {{ ca_dir }}/newcerts
+          database        = {{ index_file }}
+          serial          = {{ serial_file }}
+          default_days   = 3650
+          default_crl_days= 30
+          default_md    = default
+          policy          = policy_strict
+          email_in_dn     = no
+          nameopt        = default_ca
+          copy_extensions = copy
+          x509_extensions = v3_ca
+          distinguished_name = req_distinguished_name
+          req              = req_distinguished_name
+          string_mask     = utf8only
+          preserve         = no
+
+    - name: Create CA root certificate
+      openssl_certificate:
+        type: ca
+        privatekey_path: "{{ ca_key }}"
+        CSR:
+          CN: .
+          countryName: PH
+          stateOrProvinceName: .
+          localityName: Manila
+          organizationName: .
+          organizationalUnitName: .
+          emailAddress: qjebalawang@tip.edu.ph
+        days: 3650
+        ext:
+          - v3_ca
+          - usr_cert
+        serial: "{{ ca_dir }}/serial"
+        serial_number: 01
+        passphrase: "{{ passphrase }}"
+
+    - name: Move CA certificate and key to the correct location
+      blockinfile:
+        path: /etc/ssl/openssl.cnf
+        block: |
+          [ req ]
+          req_extensions = v3_req
+
+          [ v3_ca ]
+          subjectKeyIdentifier = hash
+          authorityKeyIdentifier = keyid:always,issuer:always
+          basicConstraints = critical, CA:true
+          keyUsage = critical, cRLSign, keyCertSign
+
+          [ v3_req ]
+          basicConstraints = CA:false
+          keyUsage = digitalSignature, keyEncipherment
+          subjectAltName = @alt_names
+
+          [alt_names]
+          DNS.1 = your_host
+
+      register: cert_conf
+
+    - name: Move CA certificate and key to the correct location
+      block:
+        - name: Copy CA key
+          copy:
+            src: "{{ ca_key }}"
+            dest: "{{ ca_dir }}/cakey.pem"
+            mode: 0600
+
+        - name: Copy CA certificate
+          copy:
+            src: "{{ ca_cert }}"
