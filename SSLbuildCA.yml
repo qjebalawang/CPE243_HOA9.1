@@ -5,15 +5,9 @@
 
   tasks:
     - name: Install Python OpenSSL package
-      yum:
+      apt:
         name:
-          - pyOpenSSL
-          - python2-pip
-          - ca-certificates
-
-    - name: Upgrade Python OpenSSL
-      pip:
-        name: pyOpenSSL>=0.15
+          - openssl
 
     - name: Generate CA private key
       openssl_privatekey:
