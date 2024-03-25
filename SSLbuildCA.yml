@@ -1,6 +1,6 @@
 ---
 - name: Build CA on Control Node
-  hosts: manage
+  hosts: managenode
   become: true
 
   tasks:
